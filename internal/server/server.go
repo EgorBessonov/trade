@@ -29,7 +29,7 @@ func (s *Server) OpenPosition(ctx context.Context, request *tradeService.OpenPos
 			UserID:     request.UserId,
 			ShareType:  request.ShareType,
 			ShareCount: request.Count,
-			Ask:        request.Price,
+			Price:      request.Price,
 		})
 		if err != nil {
 			logrus.WithFields(logrus.Fields{
@@ -43,7 +43,7 @@ func (s *Server) OpenPosition(ctx context.Context, request *tradeService.OpenPos
 		UserID:     request.UserId,
 		ShareType:  request.ShareType,
 		ShareCount: request.Count,
-		Bid:        request.Price,
+		Price:      request.Price,
 	})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{

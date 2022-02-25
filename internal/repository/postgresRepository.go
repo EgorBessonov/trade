@@ -21,7 +21,7 @@ func NewPostgresRepository(conn *pgxpool.Pool) *PostgresRepository {
 func (rps *PostgresRepository) OpenBuyPosition(ctx context.Context, tx pgx.Tx, openRequest *model.OpenRequest) (string, error) {
 	var positionID string
 	err := tx.QueryRow(ctx, `insert into positions (sharetype, sharecount, bid, opentime)
-	values ($1, $2, $3, $4) returning positionid`, openRequest.ShareType, openRequest.ShareCount, openRequest.Bid, time.Now().Format(time.RFC3339Nano)).Scan(&positionID)
+	values ($1, $2, $3, $4) returning positionid`, openRequest.ShareType, openRequest.ShareCount, openRequest.Price, time.Now().Format(time.RFC3339Nano)).Scan(&positionID)
 	if err != nil {
 		return "", fmt.Errorf("repository: can't open position - %e", err)
 	}
@@ -32,7 +32,7 @@ func (rps *PostgresRepository) OpenBuyPosition(ctx context.Context, tx pgx.Tx, o
 func (rps *PostgresRepository) OpenSalePosition(ctx context.Context, tx pgx.Tx, openRequest *model.OpenRequest) (string, error) {
 	var positionID string
 	err := tx.QueryRow(ctx, `insert into positions (sharetype, sharecount, ask, opentime)
-	values ($1, $2, $3, $4) returning positionid`, openRequest.ShareType, openRequest.ShareCount, openRequest.Ask, time.Now().Format(time.RFC3339Nano)).Scan(&positionID)
+	values ($1, $2, $3, $4) returning positionid`, openRequest.ShareType, openRequest.ShareCount, openRequest.Price, time.Now().Format(time.RFC3339Nano)).Scan(&positionID)
 	if err != nil {
 		return "", fmt.Errorf("repository: can't open position - %e", err)
 	}

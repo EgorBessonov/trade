@@ -46,6 +46,30 @@ func (p *PriceService) GetBidPrice(shareType int32) (float32, error) {
 	return 0.0, fmt.Errorf("share list: can't find bid value")
 }
 
+func (p *PriceService) CheckOpenPrice(shareType int32, price float32, isSale bool) (bool, error) {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	if value, ok := p.shareList[shareType]; ok {
+		if isSale {
+			return value.Ask == price, nil
+		}
+		return value.Bid == price, nil
+	}
+	return false, fmt.Errorf("share list: can't find price value")
+}
+
+func (p *PriceService) CheckClosePrice(shareType int32, price float32, isSale bool) (bool, error) {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	if value, ok := p.shareList[shareType]; ok {
+		if isSale {
+			return value.Bid == price, nil
+		}
+		return value.Ask == price, nil
+	}
+	return false, fmt.Errorf("share list: can't find price value")
+}
+
 func (p *PriceService) GetAskPrice(shareType int32) (float32, error) {
 	p.mutex.RLock()
 	if value, ok := p.shareList[shareType]; ok {

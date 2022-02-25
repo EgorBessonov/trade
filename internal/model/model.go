@@ -14,8 +14,7 @@ type OpenRequest struct {
 	UserID     string
 	ShareType  int32
 	ShareCount int32
-	Bid        float32
-	Ask        float32
+	Price      float32
 	IsSale     bool
 }
 
