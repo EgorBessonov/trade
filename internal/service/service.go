@@ -59,7 +59,7 @@ func (s *Service) OpenPosition(ctx context.Context, request *model.OpenRequest) 
 	user, ok := s.users[request.UserID]
 	s.mutex.RUnlock()
 	if !ok {
-		return "", fmt.Errorf("service: can't open position - user didn't find")
+		return "", fmt.Errorf("service: can't open position - user wasn't found")
 	}
 	if request.IsSale {
 		askPrice, err := s.priceService.GetAskPrice(request.ShareType)
@@ -136,7 +136,7 @@ func (s *Service) ClosePosition(ctx context.Context, request *model.CloseRequest
 	user, ok := s.users[request.UserID]
 	s.mutex.RUnlock()
 	if !ok {
-		return fmt.Errorf("service: can't close position - user didn't find")
+		return fmt.Errorf("service: can't close position - user wasn't found")
 	}
 	position := user.GetPosition(request.ShareType, request.PositionID)
 	if position == nil {
