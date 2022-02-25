@@ -15,6 +15,8 @@ message OpenPositionRequest{
   int32 count = 3;
   float price = 4;
   bool is_sale = 5;
+  float take_profit = 6;
+  float stop_loss = 7;
 }
 
 message OpenPositionResponse{
