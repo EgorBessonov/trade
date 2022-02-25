@@ -69,20 +69,17 @@ func (s *Service) OpenPosition(ctx context.Context, request *model.OpenRequest) 
 		/*if request.Price != askPrice {
 			return "", fmt.Errorf("service: can't open position - invalid price")
 		}*/
-		positionID, err := s.rps.OpenSalePosition(ctx, &model.OpenRequest{
+
+		fullPrice := askPrice * float32(request.ShareCount)
+		positionID, err := s.openTransaction(ctx, &model.OpenRequest{
 			UserID:     "",
 			ShareType:  request.ShareType,
 			ShareCount: request.ShareCount,
 			Ask:        askPrice,
-			IsSale:     false,
-		})
+			IsSale:     true},
+			fullPrice)
 		if err != nil {
 			return "", fmt.Errorf("service: can't open position - %e", err)
-		}
-		fullPrice := askPrice * float32(request.ShareCount)
-		_, err = s.balanceService.Withdraw(ctx, request.UserID, fullPrice)
-		if err != nil {
-			return "", fmt.Errorf("service: can't top up balance - %e", err)
 		}
 		user.Refill(fullPrice)
 		user.AddPosition(&model.Position{
@@ -106,17 +103,14 @@ func (s *Service) OpenPosition(ctx context.Context, request *model.OpenRequest) 
 	if !user.CheckBalance(requiredBalance) {
 		return "", fmt.Errorf("service: can't open position - unsufficient balance")
 	}
-	positionID, err := s.rps.OpenBuyPosition(ctx, &model.OpenRequest{
+	positionID, err := s.openTransaction(ctx, &model.OpenRequest{
 		ShareType:  request.ShareType,
 		ShareCount: request.ShareCount,
 		Bid:        bidPrice,
-	})
+		IsSale:     false},
+		requiredBalance)
 	if err != nil {
 		return "", fmt.Errorf("service: can't open position - %e", err)
-	}
-	_, err = s.balanceService.Withdraw(ctx, request.UserID, requiredBalance)
-	if err != nil {
-		return "", fmt.Errorf("service: can't top up balance - %e", err)
 	}
 	user.Withdraw(requiredBalance)
 	user.AddPosition(&model.Position{
@@ -258,4 +252,39 @@ func (s *Service) updatePrice(updatedPrice *model.PriceUpdate) {
 		user.UpdatePrice(updatedPrice)
 	}
 	s.mutex.Unlock()
+}
+
+func (s *Service) openTransaction(ctx context.Context, request *model.OpenRequest, price float32) (string, error) {
+	if request.IsSale {
+		positionID, err := s.rps.OpenSalePosition(ctx, request)
+		if err != nil {
+			return "", err
+		}
+		_, err = s.balanceService.Refill(ctx, request.UserID, price)
+		if err != nil {
+			delErr := s.rps.DeletePosition(ctx, positionID)
+			if delErr != nil {
+				logrus.WithFields(logrus.Fields{
+					"error": delErr,
+				}).Error("service: can't delete position")
+				return "", err
+			}
+		}
+		return positionID, nil
+	}
+	positionID, err := s.rps.OpenBuyPosition(ctx, request)
+	if err != nil {
+		return "", err
+	}
+	_, err = s.balanceService.Withdraw(ctx, request.UserID, price)
+	if err != nil {
+		delErr := s.rps.DeletePosition(ctx, positionID)
+		if delErr != nil {
+			logrus.WithFields(logrus.Fields{
+				"error": err,
+			}).Error("service: can't delete position")
+			return "", err
+		}
+	}
+	return positionID, nil
 }

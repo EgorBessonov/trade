@@ -56,6 +56,15 @@ func (rps *PostgresRepository) CloseSalePosition(ctx context.Context, closePrice
 	return nil
 }
 
+//DeletePosition method delete position from database
+func (rps *PostgresRepository) DeletePosition(ctx context.Context, positionID string) error {
+	_, err := rps.DBconn.Exec(ctx, `delete from positions where positionID=$1`, positionID)
+	if err != nil {
+		return fmt.Errorf("repository: can't delete position")
+	}
+	return nil
+}
+
 //GetPosition method returns position record from database
 func (rps *PostgresRepository) GetPosition(ctx context.Context, positionID string) (*model.Position, error) {
 	var position model.Position
