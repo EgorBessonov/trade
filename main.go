@@ -83,7 +83,8 @@ func main() {
 		UserID:     "ec08e0b2-92e2-11ec-9f27-0242ac110002",
 		ShareType:  1,
 		ShareCount: 15,
-		Price:      10,
+		Ask:        10,
+		IsSale:     true,
 	})
 	logrus.Printf(positionID)
 	<-exitChan

@@ -55,6 +55,46 @@ func NewService(ctx context.Context, b balanceService.BalanceClient, p priceServ
 
 //OpenPosition create new position and update user balance
 func (s *Service) OpenPosition(ctx context.Context, request *model.OpenRequest) (string, error) {
+	s.mutex.RLock()
+	user, ok := s.users[request.UserID]
+	s.mutex.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("service: can't open position - user didn't find")
+	}
+	if request.IsSale {
+		askPrice, err := s.priceService.GetAskPrice(request.ShareType)
+		if err != nil {
+			return "", fmt.Errorf("service: can't open position - %e", err)
+		}
+		/*if request.Price != askPrice {
+			return "", fmt.Errorf("service: can't open position - invalid price")
+		}*/
+		positionID, err := s.rps.OpenSalePosition(ctx, &model.OpenRequest{
+			UserID:     "",
+			ShareType:  request.ShareType,
+			ShareCount: request.ShareCount,
+			Ask:        askPrice,
+			IsSale:     false,
+		})
+		if err != nil {
+			return "", fmt.Errorf("service: can't open position - %e", err)
+		}
+		fullPrice := askPrice * float32(request.ShareCount)
+		_, err = s.balanceService.Withdraw(ctx, request.UserID, fullPrice)
+		if err != nil {
+			return "", fmt.Errorf("service: can't top up balance - %e", err)
+		}
+		user.Refill(fullPrice)
+		user.AddPosition(&model.Position{
+			PositionID: positionID,
+			ShareType:  request.ShareType,
+			ShareCount: request.ShareCount,
+			Ask:        askPrice,
+			OpenTime:   time.Now().Format(time.RFC3339Nano),
+			IsSale:     true,
+		})
+		return positionID, nil
+	}
 	bidPrice, err := s.priceService.GetBidPrice(request.ShareType)
 	if err != nil {
 		return "", fmt.Errorf("service: can't open position - %e", err)
@@ -62,14 +102,14 @@ func (s *Service) OpenPosition(ctx context.Context, request *model.OpenRequest) 
 	/*if request.Price != bidPrice {
 		return "", fmt.Errorf("service: can't open position - invalid price")
 	}*/
-	requiredBalance := request.Price * float32(request.ShareCount)
-	if !s.users[request.UserID].CheckBalance(requiredBalance) {
+	requiredBalance := request.Bid * float32(request.ShareCount)
+	if !user.CheckBalance(requiredBalance) {
 		return "", fmt.Errorf("service: can't open position - unsufficient balance")
 	}
-	positionID, err := s.rps.OpenPosition(ctx, &model.OpenRequest{
+	positionID, err := s.rps.OpenBuyPosition(ctx, &model.OpenRequest{
 		ShareType:  request.ShareType,
 		ShareCount: request.ShareCount,
-		Price:      bidPrice,
+		Bid:        bidPrice,
 	})
 	if err != nil {
 		return "", fmt.Errorf("service: can't open position - %e", err)
@@ -78,22 +118,57 @@ func (s *Service) OpenPosition(ctx context.Context, request *model.OpenRequest) 
 	if err != nil {
 		return "", fmt.Errorf("service: can't top up balance - %e", err)
 	}
-	s.users[request.UserID].Withdraw(requiredBalance)
-	s.users[request.UserID].AddPosition(&model.Position{
+	user.Withdraw(requiredBalance)
+	user.AddPosition(&model.Position{
 		PositionID: positionID,
 		ShareType:  request.ShareType,
 		ShareCount: request.ShareCount,
-		Bid:        request.Price,
+		Bid:        request.Bid,
 		OpenTime:   time.Now().Format(time.RFC3339Nano),
+		IsSale:     false,
 	})
 	return positionID, nil
 }
 
 //ClosePosition method close position and update user balance
 func (s *Service) ClosePosition(ctx context.Context, request *model.CloseRequest) error {
-	position := s.users[request.UserID].GetPosition(request.ShareType, request.PositionID)
+	s.mutex.RLock()
+	user, ok := s.users[request.UserID]
+	s.mutex.RUnlock()
+	if !ok {
+		return fmt.Errorf("service: can't close position - user didn't find")
+	}
+	position := user.GetPosition(request.ShareType, request.PositionID)
 	if position == nil {
 		return fmt.Errorf("service: can't close position- can't get position info")
+	}
+	if position.IsSale {
+		bid, err := s.priceService.GetAskPrice(request.ShareType)
+		if err != nil {
+			return fmt.Errorf("service: can't close position - %e", err)
+		}
+		if request.Price != bid {
+			return fmt.Errorf("service: can't close position - invalid price")
+		}
+		requiredBalance := float32(position.ShareCount) * bid
+		if !user.CheckBalance(requiredBalance) {
+			return fmt.Errorf("service: can't close position - unsufficient balance")
+		}
+		profit := (position.Ask - bid) * float32(position.ShareCount)
+		err = s.rps.CloseSalePosition(ctx, request.Price, profit, request.PositionID)
+		if err != nil {
+			return fmt.Errorf("service: can't close position - %e", err)
+		}
+		_, err = s.balanceService.Withdraw(ctx, request.UserID, requiredBalance)
+		if err != nil {
+			return fmt.Errorf("service: can't refill balance - %e", err)
+		}
+		user.ClosePosition(&model.Position{
+			PositionID: request.PositionID,
+			ShareType:  request.ShareType,
+			ShareCount: position.ShareCount},
+			-requiredBalance)
+		return nil
 	}
 	ask, err := s.priceService.GetAskPrice(request.ShareType)
 	if err != nil {
@@ -104,7 +179,7 @@ func (s *Service) ClosePosition(ctx context.Context, request *model.CloseRequest
 	}
 	fullPrice := request.Price * float32(position.ShareCount)
 	profit := (request.Price - position.Bid) * float32(position.ShareCount)
-	err = s.rps.ClosePosition(ctx, request.Price, profit, request.PositionID)
+	err = s.rps.CloseBuyPosition(ctx, request.Price, profit, request.PositionID)
 	if err != nil {
 		return fmt.Errorf("service: can't close position - %e", err)
 	}
@@ -112,7 +187,7 @@ func (s *Service) ClosePosition(ctx context.Context, request *model.CloseRequest
 	if err != nil {
 		return fmt.Errorf("service: can't refill balance - %e", err)
 	}
-	s.users[request.UserID].ClosePosition(&model.Position{
+	user.ClosePosition(&model.Position{
 		PositionID: request.PositionID,
 		ShareType:  request.ShareType,
 		ShareCount: position.ShareCount},

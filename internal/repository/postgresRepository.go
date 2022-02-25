@@ -16,21 +16,40 @@ func NewPostgresRepository(conn *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{DBconn: conn}
 }
 
-//OpenPosition method create position record in database
-func (rps *PostgresRepository) OpenPosition(ctx context.Context, openRequest *model.OpenRequest) (string, error) {
+//OpenBuyPosition method create position record in database
+func (rps *PostgresRepository) OpenBuyPosition(ctx context.Context, openRequest *model.OpenRequest) (string, error) {
 	var positionID string
 	err := rps.DBconn.QueryRow(ctx, `insert into positions (sharetype, sharecount, bid, opentime)
-	values ($1, $2, $3, $4) returning positionid`, openRequest.ShareType, openRequest.ShareCount, openRequest.Price, time.Now().Format(time.RFC3339Nano)).Scan(&positionID)
+	values ($1, $2, $3, $4) returning positionid`, openRequest.ShareType, openRequest.ShareCount, openRequest.Bid, time.Now().Format(time.RFC3339Nano)).Scan(&positionID)
 	if err != nil {
 		return "", fmt.Errorf("repository: can't open position - %e", err)
 	}
-
 	return positionID, nil
 }
 
-//ClosePosition method close position record in database
-func (rps *PostgresRepository) ClosePosition(ctx context.Context, closePrice, profit float32, positionID string) error {
+//OpenSalePosition method create position record in database
+func (rps *PostgresRepository) OpenSalePosition(ctx context.Context, openRequest *model.OpenRequest) (string, error) {
+	var positionID string
+	err := rps.DBconn.QueryRow(ctx, `insert into positions (sharetype, sharecount, ask, opentime)
+	values ($1, $2, $3, $4) returning positionid`, openRequest.ShareType, openRequest.ShareCount, openRequest.Ask, time.Now().Format(time.RFC3339Nano)).Scan(&positionID)
+	if err != nil {
+		return "", fmt.Errorf("repository: can't open position - %e", err)
+	}
+	return positionID, nil
+}
+
+//CloseBuyPosition method close position record in database
+func (rps *PostgresRepository) CloseBuyPosition(ctx context.Context, closePrice, profit float32, positionID string) error {
 	_, err := rps.DBconn.Exec(ctx, `update positions set ask=$1, closeTime=$2, profit=$3 where positionID=$4`, closePrice, time.Now().Format(time.RFC3339Nano), profit, positionID)
+	if err != nil {
+		return fmt.Errorf("repository: can't close position - %e", err)
+	}
+	return nil
+}
+
+//CloseSalePosition method close position record in database
+func (rps *PostgresRepository) CloseSalePosition(ctx context.Context, closePrice, profit float32, positionID string) error {
+	_, err := rps.DBconn.Exec(ctx, `update positions set bid=$1, closeTime=$2, profit=$3 where positionID=$4`, closePrice, time.Now().Format(time.RFC3339Nano), profit, positionID)
 	if err != nil {
 		return fmt.Errorf("repository: can't close position - %e", err)
 	}

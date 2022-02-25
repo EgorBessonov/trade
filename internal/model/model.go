@@ -14,7 +14,9 @@ type OpenRequest struct {
 	UserID     string
 	ShareType  int32
 	ShareCount int32
-	Price      float32
+	Bid        float32
+	Ask        float32
+	IsSale     bool
 }
 
 //PriceUpdate type represents info which is needed for share price updating
@@ -29,6 +31,7 @@ type CloseRequest struct {
 	ShareType  int32
 	PositionID string
 	Price      float32
+	IsSale     bool
 }
 
 //Position type represents position structure in trade service
@@ -41,10 +44,14 @@ type Position struct {
 	OpenTime   string
 	CloseTime  string
 	Profit     float32
+	IsSale     bool
 	IsOpened   bool
 }
 
 //PNL method calculates pnl for position
-func (p *Position) PNL(ask float32) float32 {
-	return p.Ask - ask*float32(p.ShareCount)
+func (p *Position) PNL(closePrice float32) float32 {
+	if p.IsSale {
+		return p.Ask - closePrice*float32(p.ShareCount)
+	}
+	return p.Bid - closePrice*float32(p.ShareCount)
 }
