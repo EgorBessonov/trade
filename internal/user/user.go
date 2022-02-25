@@ -36,20 +36,17 @@ func NewUser(ctx context.Context, userBalance float32, closeChan chan model.Clos
 				user.mutex.RLock()
 				for positionID, position := range user.positions[updatedShare.ShareType] {
 					if takeProfit(position, &updatedShare) || stopLoss(position, &updatedShare) {
+						var price float32
 						if position.IsSale {
-							user.closeCh <- model.CloseRequest{
-								UserID:     user.id,
-								ShareType:  updatedShare.ShareType,
-								PositionID: positionID,
-								Price:      updatedShare.Bid,
-							}
+							price = updatedShare.Bid
 						} else {
-							user.closeCh <- model.CloseRequest{
-								UserID:     user.id,
-								ShareType:  updatedShare.ShareType,
-								PositionID: positionID,
-								Price:      updatedShare.Ask,
-							}
+							price = updatedShare.Ask
+						}
+						user.closeCh <- model.CloseRequest{
+							UserID:     user.id,
+							ShareType:  updatedShare.ShareType,
+							PositionID: positionID,
+							Price:      price,
 						}
 					}
 				}
