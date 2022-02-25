@@ -5,7 +5,6 @@ import (
 	balanceService "github.com/EgorBessonov/balance-service/protocol"
 	priceService "github.com/EgorBessonov/price-service/protocol"
 	"github.com/EgorBessonov/trade/internal/config"
-	"github.com/EgorBessonov/trade/internal/model"
 	"github.com/EgorBessonov/trade/internal/repository"
 	"github.com/EgorBessonov/trade/internal/server"
 	"github.com/EgorBessonov/trade/internal/service"
@@ -18,7 +17,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 )
 
 func main() {
@@ -72,21 +70,6 @@ func main() {
 	tService := service.NewService(exitContext, balanceCli, priceCli, rps)
 	tServer := server.NewServer(tService)
 	go newgRPCConnection(cfg.TradeServerPort, tServer)
-	err = tService.NewUser("ec08e0b2-92e2-11ec-9f27-0242ac110002")
-	if err != nil {
-		logrus.WithFields(logrus.Fields{
-			"error": err,
-		}).Error("can't create new user")
-	}
-	time.Sleep(20 * time.Second)
-	positionID, err := tService.OpenPosition(context.Background(), &model.OpenRequest{
-		UserID:     "ec08e0b2-92e2-11ec-9f27-0242ac110002",
-		ShareType:  1,
-		ShareCount: 15,
-		Ask:        10,
-		IsSale:     true,
-	})
-	logrus.Printf(positionID)
 	<-exitChan
 	cancelFunc()
 }

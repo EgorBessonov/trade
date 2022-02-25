@@ -9,6 +9,7 @@ import (
 	"github.com/EgorBessonov/trade/internal/model"
 	"github.com/EgorBessonov/trade/internal/repository"
 	"github.com/EgorBessonov/trade/internal/user"
+	"github.com/jackc/pgx/v4"
 	"github.com/sirupsen/logrus"
 	"sync"
 	"time"
@@ -66,21 +67,16 @@ func (s *Service) OpenPosition(ctx context.Context, request *model.OpenRequest) 
 		if err != nil {
 			return "", fmt.Errorf("service: can't open position - %e", err)
 		}
-		/*if request.Price != askPrice {
+		if request.Ask != askPrice {
 			return "", fmt.Errorf("service: can't open position - invalid price")
-		}*/
-
+		}
 		fullPrice := askPrice * float32(request.ShareCount)
-		positionID, err := s.openTransaction(ctx, &model.OpenRequest{
-			UserID:     "",
+		positionID, err := s.open(ctx, &model.OpenRequest{
 			ShareType:  request.ShareType,
 			ShareCount: request.ShareCount,
 			Ask:        askPrice,
-			IsSale:     true},
-			fullPrice)
-		if err != nil {
-			return "", fmt.Errorf("service: can't open position - %e", err)
-		}
+			IsSale:     false,
+		}, fullPrice)
 		user.Refill(fullPrice)
 		user.AddPosition(&model.Position{
 			PositionID: positionID,
@@ -96,22 +92,19 @@ func (s *Service) OpenPosition(ctx context.Context, request *model.OpenRequest) 
 	if err != nil {
 		return "", fmt.Errorf("service: can't open position - %e", err)
 	}
-	/*if request.Price != bidPrice {
+	if request.Bid != bidPrice {
 		return "", fmt.Errorf("service: can't open position - invalid price")
-	}*/
+	}
 	requiredBalance := request.Bid * float32(request.ShareCount)
 	if !user.CheckBalance(requiredBalance) {
 		return "", fmt.Errorf("service: can't open position - unsufficient balance")
 	}
-	positionID, err := s.openTransaction(ctx, &model.OpenRequest{
+	positionID, err := s.open(ctx, &model.OpenRequest{
 		ShareType:  request.ShareType,
 		ShareCount: request.ShareCount,
 		Bid:        bidPrice,
 		IsSale:     false},
 		requiredBalance)
-	if err != nil {
-		return "", fmt.Errorf("service: can't open position - %e", err)
-	}
 	user.Withdraw(requiredBalance)
 	user.AddPosition(&model.Position{
 		PositionID: positionID,
@@ -149,13 +142,12 @@ func (s *Service) ClosePosition(ctx context.Context, request *model.CloseRequest
 			return fmt.Errorf("service: can't close position - unsufficient balance")
 		}
 		profit := (position.Ask - bid) * float32(position.ShareCount)
-		err = s.rps.CloseSalePosition(ctx, request.Price, profit, request.PositionID)
+		err = s.close(ctx, &model.CloseRequest{
+			PositionID: request.PositionID,
+			Price:      request.Price},
+			requiredBalance, profit)
 		if err != nil {
-			return fmt.Errorf("service: can't close position - %e", err)
-		}
-		_, err = s.balanceService.Withdraw(ctx, request.UserID, requiredBalance)
-		if err != nil {
-			return fmt.Errorf("service: can't refill balance - %e", err)
+			return fmt.Errorf("service; can't close position")
 		}
 		user.ClosePosition(&model.Position{
 			PositionID: request.PositionID,
@@ -173,13 +165,12 @@ func (s *Service) ClosePosition(ctx context.Context, request *model.CloseRequest
 	}
 	fullPrice := request.Price * float32(position.ShareCount)
 	profit := (request.Price - position.Bid) * float32(position.ShareCount)
-	err = s.rps.CloseBuyPosition(ctx, request.Price, profit, request.PositionID)
+	err = s.close(ctx, &model.CloseRequest{
+		PositionID: request.PositionID,
+		Price:      request.Price},
+		fullPrice, profit)
 	if err != nil {
-		return fmt.Errorf("service: can't close position - %e", err)
-	}
-	_, err = s.balanceService.Refill(ctx, request.UserID, fullPrice)
-	if err != nil {
-		return fmt.Errorf("service: can't refill balance - %e", err)
+		return fmt.Errorf("service; can't close position")
 	}
 	user.ClosePosition(&model.Position{
 		PositionID: request.PositionID,
@@ -254,37 +245,74 @@ func (s *Service) updatePrice(updatedPrice *model.PriceUpdate) {
 	s.mutex.Unlock()
 }
 
-func (s *Service) openTransaction(ctx context.Context, request *model.OpenRequest, price float32) (string, error) {
-	if request.IsSale {
-		positionID, err := s.rps.OpenSalePosition(ctx, request)
-		if err != nil {
-			return "", err
-		}
-		_, err = s.balanceService.Refill(ctx, request.UserID, price)
-		if err != nil {
-			delErr := s.rps.DeletePosition(ctx, positionID)
-			if delErr != nil {
-				logrus.WithFields(logrus.Fields{
-					"error": delErr,
-				}).Error("service: can't delete position")
-				return "", err
-			}
-		}
-		return positionID, nil
-	}
-	positionID, err := s.rps.OpenBuyPosition(ctx, request)
+func (s *Service) open(ctx context.Context, request *model.OpenRequest, balanceShift float32) (string, error) {
+	tx, err := s.rps.DBconn.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return "", err
 	}
-	_, err = s.balanceService.Withdraw(ctx, request.UserID, price)
-	if err != nil {
-		delErr := s.rps.DeletePosition(ctx, positionID)
-		if delErr != nil {
-			logrus.WithFields(logrus.Fields{
-				"error": err,
-			}).Error("service: can't delete position")
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	if request.IsSale {
+		positionID, err := s.rps.OpenSalePosition(ctx, tx, request)
+		if err != nil {
 			return "", err
 		}
+		_, err = s.balanceService.Refill(ctx, request.UserID, balanceShift)
+		if err != nil {
+			return "", err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return "", err
+		}
+		return positionID, nil
+	}
+	positionID, err := s.rps.OpenBuyPosition(ctx, tx, request)
+	if err != nil {
+		return "", err
+	}
+	_, err = s.balanceService.Withdraw(ctx, request.UserID, balanceShift)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
 	}
 	return positionID, nil
+}
+
+func (s *Service) close(ctx context.Context, request *model.CloseRequest, balanceShift, profit float32) error {
+	tx, err := s.rps.DBconn.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	if request.IsSale {
+		err = s.rps.CloseSalePosition(ctx, tx, request.Price, profit, request.PositionID)
+		if err != nil {
+			return err
+		}
+		_, err = s.balanceService.Withdraw(ctx, request.UserID, balanceShift)
+		if err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		return nil
+	}
+	err = s.rps.CloseBuyPosition(ctx, tx, request.Price, profit, request.PositionID)
+	if err != nil {
+		return err
+	}
+	_, err = s.balanceService.Refill(ctx, request.UserID, balanceShift)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return nil
 }
