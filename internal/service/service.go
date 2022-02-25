@@ -115,7 +115,7 @@ func (s *Service) ClosePosition(ctx context.Context, request *model.CloseRequest
 		return fmt.Errorf("service: can't close position - invalid price")
 	}
 	fullPrice := request.Price * float32(position.ShareCount)
-	profit := (request.Price - position.Bid) * float32(position.ShareCount)
+	profit := position.PNL(request.Price)
 	err = s.close(ctx, &model.CloseRequest{
 		PositionID: request.PositionID,
 		Price:      request.Price},
