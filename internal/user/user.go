@@ -33,13 +33,34 @@ func NewUser(ctx context.Context, userBalance float32, closeChan chan model.Clos
 			case <-ctx.Done():
 				return
 			case updatedShare := <-user.priceCh:
+				user.mutex.RLock()
+				for positionID, position := range user.positions[updatedShare.ShareType] {
+					if takeProfit(position) || stopLoss(position) {
+						if position.IsSale {
+							user.closeCh <- model.CloseRequest{
+								UserID:     user.id,
+								ShareType:  updatedShare.ShareType,
+								PositionID: positionID,
+								Price:      updatedShare.Bid,
+							}
+						} else {
+							user.closeCh <- model.CloseRequest{
+								UserID:     user.id,
+								ShareType:  updatedShare.ShareType,
+								PositionID: positionID,
+								Price:      updatedShare.Ask,
+							}
+						}
+					}
+				}
+				user.mutex.RUnlock()
 				positionID, ok := user.marginCall(&updatedShare)
 				if ok {
 					user.closeCh <- model.CloseRequest{
 						UserID:     user.id,
 						ShareType:  updatedShare.ShareType,
 						PositionID: positionID,
-						Price:      updatedShare.UpdatedPrice,
+						Price:      updatedShare.Ask,
 					}
 				}
 			}
@@ -128,7 +149,7 @@ func (u *User) marginCall(up *model.PriceUpdate) (string, bool) {
 	u.mutex.RLock()
 	currentBalance := u.balance
 	for _, position := range u.positions[up.ShareType] {
-		pnl := position.PNL(up.UpdatedPrice)
+		pnl := position.PNL(up.Ask)
 		if float32(profit) > pnl {
 			positionID = position.PositionID
 		}
@@ -136,6 +157,20 @@ func (u *User) marginCall(up *model.PriceUpdate) (string, bool) {
 	}
 	u.mutex.RUnlock()
 	return positionID, currentBalance < 0
+}
+
+func takeProfit(p *model.Position) bool {
+	if p.IsSale {
+		return p.Bid <= p.TakeProfit
+	}
+	return p.Ask >= p.TakeProfit
+}
+
+func stopLoss(p *model.Position) bool {
+	if p.IsSale {
+		return p.Bid >= p.StopLoss
+	}
+	return p.Ask <= p.StopLoss
 }
 
 //CheckBalance return false if user balance less than required balance for opening position

@@ -88,6 +88,8 @@ func (s *Service) OpenPosition(ctx context.Context, request *model.OpenRequest) 
 		PositionID: positionID,
 		ShareType:  request.ShareType,
 		ShareCount: request.ShareCount,
+		StopLoss:   request.StopLoss,
+		TakeProfit: request.TakeProfit,
 		Bid:        request.Price,
 		OpenTime:   time.Now().Format(time.RFC3339Nano),
 		IsSale:     false,
@@ -173,8 +175,9 @@ func (s *Service) SubscribePriceService(ctx context.Context) {
 			s.priceService.SaveOrUpdate(share)
 			s.addShare(share.ShareType)
 			s.updatePrice(&model.PriceUpdate{
-				ShareType:    share.ShareType,
-				UpdatedPrice: share.Ask,
+				ShareType: share.ShareType,
+				Ask:       share.Ask,
+				Bid:       share.Bid,
 			})
 		}
 	}

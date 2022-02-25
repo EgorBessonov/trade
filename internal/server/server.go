@@ -24,26 +24,13 @@ func NewServer(service *service.Service) *Server {
 
 //OpenPosition method open position record
 func (s *Server) OpenPosition(ctx context.Context, request *tradeService.OpenPositionRequest) (*tradeService.OpenPositionResponse, error) {
-	if request.IsSale {
-		positionID, err := s.Service.OpenPosition(ctx, &model.OpenRequest{
-			UserID:     request.UserId,
-			ShareType:  request.ShareType,
-			ShareCount: request.Count,
-			Price:      request.Price,
-		})
-		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"error": err,
-			}).Error("server: can't open position")
-			return nil, err
-		}
-		return &tradeService.OpenPositionResponse{PositionID: positionID}, nil
-	}
 	positionID, err := s.Service.OpenPosition(ctx, &model.OpenRequest{
 		UserID:     request.UserId,
 		ShareType:  request.ShareType,
 		ShareCount: request.Count,
 		Price:      request.Price,
+		StopLoss:   request.StopLoss,
+		TakeProfit: request.TakeProfit,
 	})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{

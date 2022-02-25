@@ -15,13 +15,16 @@ type OpenRequest struct {
 	ShareType  int32
 	ShareCount int32
 	Price      float32
+	TakeProfit float32
+	StopLoss   float32
 	IsSale     bool
 }
 
 //PriceUpdate type represents info which is needed for share price updating
 type PriceUpdate struct {
-	ShareType    int32
-	UpdatedPrice float32
+	ShareType int32
+	Ask       float32
+	Bid       float32
 }
 
 //CloseRequest type represents ClosePosition request structure in trade service
@@ -42,6 +45,8 @@ type Position struct {
 	Ask        float32
 	OpenTime   string
 	CloseTime  string
+	StopLoss   float32
+	TakeProfit float32
 	Profit     float32
 	IsSale     bool
 	IsOpened   bool
