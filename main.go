@@ -86,6 +86,20 @@ func main() {
 		StopLoss:   11,
 		IsSale:     false,
 	})
+	logrus.Println(positionID)
+	time.Sleep(5 * time.Second)
+	if err != nil {
+		logrus.Println("can't add user")
+	}
+	positionID, err = tService.TEST(context.Background(), &model.OpenRequest{
+		UserID:     "ec08e0b2-92e2-11ec-9f27-0242ac110002",
+		ShareType:  4,
+		ShareCount: 15,
+		Price:      12.36,
+		TakeProfit: 15,
+		StopLoss:   11,
+		IsSale:     false,
+	})
 	logrus.Printf(positionID)
 	<-exitChan
 	cancelFunc()

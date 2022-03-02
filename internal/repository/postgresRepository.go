@@ -83,8 +83,8 @@ func (rps *PostgresRepository) GetPositionsByID(ctx context.Context, userID stri
 	if err != nil {
 		return nil, fmt.Errorf("repository: can't get positions - %e", err)
 	}
-	for i := count; i >= 1; i-- {
-		positions[i] = make(map[string]*model.Position)
+	if count == 0 {
+		return nil, nil
 	}
 	rows, err := rps.DBconn.Query(ctx, "select * from positions where userid=$1 and isopened=true", userID)
 	if err != nil {
@@ -97,6 +97,9 @@ func (rps *PostgresRepository) GetPositionsByID(ctx context.Context, userID stri
 			return nil, fmt.Errorf("repository: can't get positions - %e", err)
 		}
 		if _, ok := positions[position.ShareType]; ok {
+			positions[position.ShareType][position.PositionID] = &position
+		} else {
+			positions[position.ShareType] = make(map[string]*model.Position)
 			positions[position.ShareType][position.PositionID] = &position
 		}
 	}

@@ -330,14 +330,13 @@ func (s *Service) catchPostgresNotify(ctx context.Context) {
 					"error": err,
 				}).Error("service: error while parsing postgres notification")
 			}
+			s.mutex.RLock()
+			u := s.users[position.PositionID]
+			s.mutex.RUnlock()
 			if position.IsOpened {
-				s.mutex.Lock()
-				s.users[position.UserID].AddPosition(&position)
-				s.mutex.Unlock()
+				u.AddPosition(&position)
 			} else {
-				s.mutex.Lock()
-				s.users[position.UserID].ClosePosition(&position)
-				s.mutex.Unlock()
+				u.ClosePosition(&position)
 			}
 		}
 	}
