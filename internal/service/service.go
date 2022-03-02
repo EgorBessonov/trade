@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	balanceService "github.com/EgorBessonov/balance-service/protocol"
 	priceService "github.com/EgorBessonov/price-service/protocol"
@@ -12,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/sirupsen/logrus"
 	"sync"
-	"time"
 )
 
 //Service struct
@@ -51,7 +51,16 @@ func NewService(ctx context.Context, b balanceService.BalanceClient, p priceServ
 		}
 	}()
 	go s.SubscribePriceService(ctx)
+	go s.catchPostgresNotify(ctx)
 	return &s
+}
+
+func (s *Service) TEST(ctx context.Context, request *model.OpenRequest) (string, error) {
+	positionID, err := s.open(ctx, request, 15)
+	if err != nil {
+		return "", err
+	}
+	return positionID, nil
 }
 
 //OpenPosition create new position and update user balance
@@ -84,28 +93,18 @@ func (s *Service) OpenPosition(ctx context.Context, request *model.OpenRequest) 
 		return "", err
 	}
 	u.Withdraw(requiredBalance)
-	u.AddPosition(&model.Position{
-		PositionID: positionID,
-		ShareType:  request.ShareType,
-		ShareCount: request.ShareCount,
-		StopLoss:   request.StopLoss,
-		TakeProfit: request.TakeProfit,
-		Bid:        request.Price,
-		OpenTime:   time.Now().Format(time.RFC3339Nano),
-		IsSale:     false,
-	})
 	return positionID, nil
 }
 
 //ClosePosition method close position and update user balance
 func (s *Service) ClosePosition(ctx context.Context, request *model.CloseRequest) error {
 	s.mutex.RLock()
-	user, ok := s.users[request.UserID]
+	u, ok := s.users[request.UserID]
 	s.mutex.RUnlock()
 	if !ok {
 		return fmt.Errorf("service: can't close position - user wasn't found")
 	}
-	position := user.GetPosition(request.ShareType, request.PositionID)
+	position := u.GetPosition(request.ShareType, request.PositionID)
 	if position == nil {
 		return fmt.Errorf("service: can't close position- can't get position info")
 	}
@@ -125,11 +124,7 @@ func (s *Service) ClosePosition(ctx context.Context, request *model.CloseRequest
 	if err != nil {
 		return fmt.Errorf("service; can't close position")
 	}
-	user.ClosePosition(&model.Position{
-		PositionID: request.PositionID,
-		ShareType:  request.ShareType,
-		ShareCount: position.ShareCount},
-		fullPrice)
+	u.Withdraw(fullPrice)
 	return nil
 }
 
@@ -139,7 +134,11 @@ func (s *Service) NewUser(userID string) error {
 	if err != nil {
 		return fmt.Errorf("service: can't create new user")
 	}
-	u := user.NewUser(context.Background(), userBalance, s.closeChan)
+	positions, err := s.rps.GetPositionsByID(context.Background(), userID)
+	if err != nil {
+		return fmt.Errorf("service: can't and user - %e", err)
+	}
+	u := user.NewUser(context.Background(), positions, userBalance, s.closeChan)
 	s.mutex.Lock()
 	s.users[userID] = u
 	s.mutex.Unlock()
@@ -173,7 +172,6 @@ func (s *Service) SubscribePriceService(ctx context.Context) {
 				UpdatedAt: shares.Share.Time,
 			}
 			s.priceService.SaveOrUpdate(share)
-			s.addShare(share.ShareType)
 			s.updatePrice(&model.PriceUpdate{
 				ShareType: share.ShareType,
 				Ask:       share.Ask,
@@ -183,18 +181,10 @@ func (s *Service) SubscribePriceService(ctx context.Context) {
 	}
 }
 
-func (s *Service) addShare(shareType int32) {
-	s.mutex.Lock()
-	for _, user := range s.users {
-		user.AddShare(shareType)
-	}
-	s.mutex.Unlock()
-}
-
 func (s *Service) updatePrice(updatedPrice *model.PriceUpdate) {
 	s.mutex.Lock()
-	for _, user := range s.users {
-		user.UpdatePrice(updatedPrice)
+	for _, u := range s.users {
+		u.UpdatePrice(updatedPrice)
 	}
 	s.mutex.Unlock()
 }
@@ -204,32 +194,65 @@ func (s *Service) open(ctx context.Context, request *model.OpenRequest, balanceS
 	if err != nil {
 		return "", err
 	}
-	defer func() {
-		_ = tx.Rollback(ctx)
-	}()
 	if request.IsSale {
 		positionID, err := s.rps.OpenSalePosition(ctx, tx, request)
 		if err != nil {
+			txErr := tx.Rollback(ctx)
+			if txErr != nil {
+				logrus.WithFields(logrus.Fields{
+					"error": txErr,
+				}).Error("service: can't close transaction")
+			}
 			return "", err
 		}
 		_, err = s.balanceService.Withdraw(ctx, request.UserID, balanceShift)
 		if err != nil {
+			txErr := tx.Rollback(ctx)
+			if txErr != nil {
+				logrus.WithFields(logrus.Fields{
+					"error": txErr,
+				}).Error("service: can't close transaction")
+			}
 			return "", err
 		}
 		if err := tx.Commit(ctx); err != nil {
+			txErr := tx.Rollback(ctx)
+			if txErr != nil {
+				logrus.WithFields(logrus.Fields{
+					"error": txErr,
+				}).Error("service: can't close transaction")
+			}
 			return "", err
 		}
 		return positionID, nil
 	}
 	positionID, err := s.rps.OpenBuyPosition(ctx, tx, request)
 	if err != nil {
+		txErr := tx.Rollback(ctx)
+		if txErr != nil {
+			logrus.WithFields(logrus.Fields{
+				"error": txErr,
+			}).Error("service: can't close transaction")
+		}
 		return "", err
 	}
 	_, err = s.balanceService.Withdraw(ctx, request.UserID, balanceShift)
 	if err != nil {
+		txErr := tx.Rollback(ctx)
+		if txErr != nil {
+			logrus.WithFields(logrus.Fields{
+				"error": txErr,
+			}).Error("service: can't close transaction")
+		}
 		return "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
+		txErr := tx.Rollback(ctx)
+		if txErr != nil {
+			logrus.WithFields(logrus.Fields{
+				"error": txErr,
+			}).Error("service: can't close transaction")
+		}
 		return "", err
 	}
 	return positionID, nil
@@ -241,7 +264,12 @@ func (s *Service) close(ctx context.Context, request *model.CloseRequest, balanc
 		return err
 	}
 	defer func() {
-		_ = tx.Rollback(ctx)
+		err = tx.Rollback(ctx)
+		if err != nil {
+			logrus.WithFields(logrus.Fields{
+				"error": err,
+			}).Error("service: can't close transaction")
+		}
 	}()
 	if request.IsSale {
 		err = s.rps.CloseSalePosition(ctx, tx, request.Price, profit, request.PositionID)
@@ -269,4 +297,48 @@ func (s *Service) close(ctx context.Context, request *model.CloseRequest, balanc
 		return err
 	}
 	return nil
+}
+
+func (s *Service) catchPostgresNotify(ctx context.Context) {
+	postgresNotify, err := s.rps.DBconn.Acquire(context.Background())
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"error": err,
+		}).Error("service: acquiring connection failed")
+	}
+	defer postgresNotify.Release()
+	_, err = postgresNotify.Exec(context.Background(), `listen notify_chat`)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"error": err,
+		}).Error("service: error while listening to chat channel")
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			notification, err := postgresNotify.Conn().WaitForNotification(context.Background())
+			if err != nil {
+				logrus.WithFields(logrus.Fields{
+					"error": err,
+				}).Error("service: error while waiting for postgres notifications")
+			}
+			position := model.Position{}
+			if err := json.Unmarshal([]byte(notification.Payload), &position); err != nil {
+				logrus.WithFields(logrus.Fields{
+					"error": err,
+				}).Error("service: error while parsing postgres notification")
+			}
+			if position.IsOpened {
+				s.mutex.Lock()
+				s.users[position.UserID].AddPosition(&position)
+				s.mutex.Unlock()
+			} else {
+				s.mutex.Lock()
+				s.users[position.UserID].ClosePosition(&position)
+				s.mutex.Unlock()
+			}
+		}
+	}
 }

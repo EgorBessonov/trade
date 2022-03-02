@@ -19,11 +19,11 @@ type User struct {
 }
 
 //NewUser method returns User instance and run goroutine which close user loss positions
-func NewUser(ctx context.Context, userBalance float32, closeChan chan model.CloseRequest) *User {
+func NewUser(ctx context.Context, pos map[int32]map[string]*model.Position, userBalance float32, closeChan chan model.CloseRequest) *User {
 	user := User{
 		balance:   userBalance,
 		priceCh:   make(chan model.PriceUpdate),
-		positions: make(map[int32]map[string]*model.Position),
+		positions: pos,
 		closeCh:   closeChan,
 		mutex:     sync.RWMutex{},
 	}
@@ -79,15 +79,18 @@ func (u *User) AddPosition(p *model.Position) {
 	if _, ok := u.positions[p.ShareType]; ok {
 		u.balance -= p.Ask * float32(p.ShareCount)
 		u.positions[p.ShareType][p.PositionID] = p
+	} else {
+		u.positions[p.ShareType] = make(map[string]*model.Position)
+		u.balance -= p.Ask * float32(p.ShareCount)
+		u.positions[p.ShareType][p.PositionID] = p
 	}
 	u.mutex.Unlock()
 }
 
 //ClosePosition method close user position
-func (u *User) ClosePosition(p *model.Position, price float32) {
+func (u *User) ClosePosition(p *model.Position) {
 	u.mutex.Lock()
 	if _, ok := u.positions[p.ShareType][p.PositionID]; ok {
-		u.balance += price * float32(p.ShareCount)
 		delete(u.positions[p.ShareType], p.PositionID)
 	}
 	u.mutex.Unlock()

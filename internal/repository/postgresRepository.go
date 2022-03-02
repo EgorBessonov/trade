@@ -20,8 +20,8 @@ func NewPostgresRepository(conn *pgxpool.Pool) *PostgresRepository {
 //OpenBuyPosition method create position record in database
 func (rps *PostgresRepository) OpenBuyPosition(ctx context.Context, tx pgx.Tx, openRequest *model.OpenRequest) (string, error) {
 	var positionID string
-	err := tx.QueryRow(ctx, `insert into positions (sharetype, sharecount, bid, opentime)
-	values ($1, $2, $3, $4) returning positionid`, openRequest.ShareType, openRequest.ShareCount, openRequest.Price, time.Now().Format(time.RFC3339Nano)).Scan(&positionID)
+	err := tx.QueryRow(ctx, `insert into positions (sharetype, sharecount, bid, opentime, userid)
+	values ($1, $2, $3, $4, $5) returning positionid`, openRequest.ShareType, openRequest.ShareCount, openRequest.Price, time.Now().Format(time.RFC3339Nano), openRequest.UserID).Scan(&positionID)
 	if err != nil {
 		return "", fmt.Errorf("repository: can't open position - %e", err)
 	}
@@ -31,8 +31,8 @@ func (rps *PostgresRepository) OpenBuyPosition(ctx context.Context, tx pgx.Tx, o
 //OpenSalePosition method create position record in database
 func (rps *PostgresRepository) OpenSalePosition(ctx context.Context, tx pgx.Tx, openRequest *model.OpenRequest) (string, error) {
 	var positionID string
-	err := tx.QueryRow(ctx, `insert into positions (sharetype, sharecount, ask, opentime)
-	values ($1, $2, $3, $4) returning positionid`, openRequest.ShareType, openRequest.ShareCount, openRequest.Price, time.Now().Format(time.RFC3339Nano)).Scan(&positionID)
+	err := tx.QueryRow(ctx, `insert into positions (userid, sharetype, sharecount, ask, opentime)
+	values ($1, $2, $3, $4, $5) returning positionid`, openRequest.UserID, openRequest.ShareType, openRequest.ShareCount, openRequest.Price, time.Now().Format(time.RFC3339Nano)).Scan(&positionID)
 	if err != nil {
 		return "", fmt.Errorf("repository: can't open position - %e", err)
 	}
@@ -74,6 +74,33 @@ func (rps *PostgresRepository) GetPosition(ctx context.Context, positionID strin
 		return nil, fmt.Errorf("repository: can't get position - %e", err)
 	}
 	return &position, nil
+}
+
+func (rps *PostgresRepository) GetPositionsByID(ctx context.Context, userID string) (map[int32]map[string]*model.Position, error) {
+	var count int32
+	positions := make(map[int32]map[string]*model.Position)
+	err := rps.DBconn.QueryRow(ctx, `select count (distinct sharetype) as "share type count" from positions where userid=$1`, userID).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("repository: can't get positions - %e", err)
+	}
+	for i := count; i >= 1; i-- {
+		positions[i] = make(map[string]*model.Position)
+	}
+	rows, err := rps.DBconn.Query(ctx, "select * from positions where userid=$1 and isopened=true", userID)
+	if err != nil {
+		return nil, fmt.Errorf("repository: can't get positions - %e", err)
+	}
+	for rows.Next() {
+		position := model.Position{}
+		err := rows.Scan(&position.PositionID, &position.ShareType, &position.ShareCount, &position.Bid, &position.Ask, &position.OpenTime, &position.CloseTime, &position.Profit, &position.IsOpened, &position.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("repository: can't get positions - %e", err)
+		}
+		if _, ok := positions[position.ShareType]; ok {
+			positions[position.ShareType][position.PositionID] = &position
+		}
+	}
+	return positions, nil
 }
 
 //GetUserBalance method returns user balance from repository

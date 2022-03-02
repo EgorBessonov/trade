@@ -39,6 +39,7 @@ type CloseRequest struct {
 //Position type represents position structure in trade service
 type Position struct {
 	PositionID string
+	UserID     string
 	ShareType  int32
 	ShareCount int32
 	Bid        float32
